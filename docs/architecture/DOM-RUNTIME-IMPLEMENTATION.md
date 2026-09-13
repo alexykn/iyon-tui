@@ -1,14 +1,17 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T7/M2, with T5/M1 locally accepted and the T6 finite
-geometry/layout foundation accepted as a separate checkpoint. React is the
-only production UI authoring route. The old native View ABI/generated outputs
-and ordinary Rust/native ViewState owners are deleted. Direct host rendering,
-semantic content lowering, and the latency-isolation request path are now in
-the current source. Remaining T7/M2 work is contract evidence and cleanup;
-deleted View/Scene/TextRenderer ownership is not to be restored.
-This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
-it is not a claim that the M1/M2 migration is complete.
+**Scope:** T0 through T7/M2. T5/M1 and T6 are accepted, and the T7/M2
+content-lowering and deletion implementation is complete in the current source.
+React is the only production UI authoring route. The old native View
+ABI/generated outputs, ordinary Rust/native ViewState owners and superseded
+View/Scene/TextRenderer ownership are deleted. Post-tranche cleanup and parent
+functional verification are recorded in
+[the deletion ledger](T7-CLEANUP-DELETION-LEDGER.md); historical performance
+comparison remains unverified and is not waived.
+This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md.
+Current-source status appears in the parent verification and current-route
+sections below. Historical tranche sections preserve their commands, results and
+hashes verbatim; their old route descriptions do not describe current source.
 
 ### Current parent verification: asynchronous completion and bounded admission
 
@@ -392,7 +395,7 @@ passes because the bounded workload submits 16 Source appends and native
 smoothing wakes; this is an architectural latency-isolation signal, not a
 reason to weaken content semantics or chase a local Markdown micro-optimization.
 
-### T7/M2 latency-isolation design — async implementation tranche landed; full gate remains
+### T7/M2 latency-isolation design — historical design (current status above)
 
 The current route now has an asynchronous latency boundary for content
 projection, Taffy layout, and direct paint. The following observations describe
@@ -533,7 +536,7 @@ pending work, while Source append/event/receipt records remain lossless.
    terminal commands and receipt wakes remain the only physical publication
    barrier.
 
-#### State and cleanup ownership to change
+#### State and cleanup ownership to change (historical design)
 
 The implementation should remove, rather than parallelize, the current
 synchronous owners in the touched path:
@@ -576,7 +579,7 @@ an acceptance waiver: full T7/M2 still requires the deterministic receipt,
 stale-generation, close, fairness, idle-frame, and cross-backend evidence, then
 deletion of the temporary legacy adapter and redundant general layout path.
 
-### T4 handoff boundary
+### T4 handoff boundary (historical tranche record)
 
 The React route now installs accepted UI mutations into the same native host
 that owns terminal presentation. `UiResourceOwner` is the sole occurrence,
@@ -595,7 +598,7 @@ latency isolation. The component-only Surface migration, explicit
 physical export policy, and GPUI host remain later work under the separate
 Surface gate; they are not T4 acceptance claims.
 
-### T4 implementation and integration-gate evidence
+### T4 implementation and integration-gate evidence (historical tranche record)
 
 This records the accepted T4 implementation and its verification. Acceptance
 includes parent review of the resulting ownership and execution paths, not
@@ -677,7 +680,7 @@ semantic content lowering and the separately scoped Surface/physical-export/
 GPUI work. Uncertain physical History suffixes remain conservatively blocked
 pending an explicit resynchronization owner.
 
-### T4 parent-review correction: zero-progress History close
+### T4 parent-review correction: zero-progress History close (historical evidence)
 
 The current source includes a narrow correction for the final-exit History
 settlement loop. `settle_history_plan_with_backend` now returns the typed
@@ -722,7 +725,7 @@ passed (66 tests), the full Bun workspace/consumer suite passed (188 tests,
 workspace Rust/ABI/declaration/binding/ownership evidence remains applicable
 to unchanged surfaces; T4 parent source/design review remains required.
 
-## Post-T2 permanent-code quality gate
+## Post-T2 permanent-code quality gate (historical tranche record)
 
 After T2 is complete, review and simplify the permanent T1 occurrence, schema,
 and generator code before starting T3. Prior T1 acceptance is not an
@@ -731,7 +734,7 @@ separate change. T2's qualified N-API adapter and any other temporary migration
 paths retain their specific deletion gates; new long-lived ownership and
 control code must remain structured at acceptance.
 
-### T1 permanent quality cleanup status
+### T1 permanent quality cleanup status (historical tranche record)
 
 **Accepted after parent review; committed separately from T2.** This cleanup
 addresses the accepted T1 occurrence/schema/generator maintenance findings:
@@ -757,7 +760,7 @@ native type-checking, formatting and the Clippy gate passed again. Earlier
 workspace and boundary evidence is reused for unchanged behavior. Clippy now
 has warnings only; the T1 hard failures recorded at T2 acceptance are resolved.
 
-## T0 baseline provenance
+## T0 baseline provenance (historical provenance)
 
 The baseline addon was staged through the repository's normal script before
 implementation work:
@@ -830,7 +833,7 @@ No immutable View-to-occurrence compatibility reconciler exists. The deleted
 View allocator and superseded Scene/TextRenderer ownership are not fallback
 paths for the direct route.
 
-## T1 schema and core
+## T1 schema and core (historical tranche record)
 
 ### Generated contract
 
@@ -910,7 +913,7 @@ records T0/T1; T2 and the full M1/M2 migration remain outstanding:
   lifetime/cycle failures. The focused occurrence suite is now 25 passed, 0
   failed.
 
-## T2 qualified native ingress and resource preparation (accepted)
+## T2 qualified native ingress and resource preparation (historical tranche record)
 
 The working tree now contains the first actual native desired-state route:
 
@@ -1030,7 +1033,7 @@ Full-suite evidence remains applicable to the parent changes above; focused
 checks cover their affected behavior. No full migration, native frame-driver,
 React, renderer or Taffy acceptance is implied.
 
-## T3 minimal React renderer (accepted)
+## T3 minimal React renderer (historical tranche record)
 
 The tranche based on `17f116c` contains the first React mutation route plus
 the ownership/lifecycle corrections described below. Parent source review and
@@ -1360,7 +1363,11 @@ ownership remains required work in the T6/T7 migration.
   it distinguishes tested bounded progress from unproven perpetual-load
   starvation freedom. Final T7/M2 acceptance still requires parent synthesis.
 
-### T6 foundation checkpoint — parent accepted
+### T6 foundation checkpoint — historical foundation (superseded by direct host cutover)
+
+This subsection preserves the pre-cutover T6 foundation record. Its status and
+future-work wording describe that historical checkpoint, not the current source;
+the current direct occurrence/Taffy route is recorded below.
 
 The finite schema and derived layout adapter are accepted as a T6 foundation
 checkpoint after parent source/design review and local integration checks.
@@ -1481,7 +1488,10 @@ Separate matching M1 source/addon captures are preserved under
 fixtures at multiple widths, including complete cell styles. These are
 comparison inputs for diagnosis, not acceptance criteria or evidence that the
 replacement must reproduce the old allocator. Linux native execution,
-fractional paint/clip behavior and the T6/T7 performance gates remain pending.
+fractional paint/clip behavior remain separately bounded evidence concerns. The
+current implementation and verification status are recorded in the parent
+verification and T7/M2 sections above; historical performance comparison
+remains unverified.
 
 #### Selected terminal layout semantics
 
@@ -1510,5 +1520,6 @@ the shared React/content plane suitable for a future GPUI host; GPUI remains
 out of scope. The native root regression requires the final hard line to
 remain visible after wrapping an unbreakable line in a narrow terminal.
 
-These decisions do not claim completion of the T7 content-lowering/deletion,
-performance, Linux, or final workspace acceptance gates.
+These decisions do not claim a historical performance comparison, Linux
+execution, or final parent workspace acceptance. Current T7 content lowering
+and deletion implementation status is recorded above.

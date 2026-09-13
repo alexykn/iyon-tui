@@ -195,14 +195,6 @@ impl TextSpan {
             style_facts: StyleFacts::default(),
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn source_page_ptr(&self) -> Option<usize> {
-        match &self.text {
-            TextStorage::SourcePage { page, .. } => Some(Arc::as_ptr(page) as *const () as usize),
-            _ => None,
-        }
-    }
 }
 
 /// Text wrapping behavior for a typed text view.

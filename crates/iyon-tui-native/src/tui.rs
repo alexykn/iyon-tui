@@ -8,9 +8,8 @@ use std::time::Duration;
 
 use iyon_tui::binding::{
     AnsiColor, ColorSpec, ContentDelivery, ContentFamily, HostCellStyle, HostContentConnector,
-    HostContentFunnel, HostContentPort, HostContentSource, HostTextInput, Key, KeyStroke,
-    Modifiers, Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind,
-    TextWrapMode, TuiEnvironment, TuiHost,
+    HostContentFunnel, HostContentPort, HostContentSource, Key, KeyStroke, Modifiers, SmoothConfig,
+    TextAttribute, TextFunnelKind, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost,
 };
 use serde_json::{Map, Value};
 
@@ -147,11 +146,6 @@ pub fn tui_perf_snapshot() -> Value {
     Value::Object(counters)
 }
 
-#[napi]
-pub struct NativeTuiOutput {
-    output: Output<String>,
-}
-
 fn ensure_alive(alive: &AtomicBool) -> Result<()> {
     if alive.load(Ordering::Acquire) {
         return Ok(());
@@ -205,159 +199,6 @@ fn decode_ui_resource_handle(
         .ok_or_else(|| crate::NativeError::invalid_input("invalid UI host namespace"))?;
     iyon_tui::binding::UiHandle::new(namespace, words[1], words[2], kind)
         .ok_or_else(|| crate::NativeError::invalid_input("invalid UI resource handle"))
-}
-
-#[napi]
-pub struct NativeTextInput {
-    state: Mutex<TextInput>,
-    host: Option<HostTextInput>,
-    alive: AtomicBool,
-}
-
-#[napi]
-impl NativeTextInput {
-    #[napi(constructor)]
-    pub fn new(multiline: Option<bool>) -> Self {
-        Self {
-            state: Mutex::new(TextInput::new().multiline(multiline.unwrap_or(false))),
-            host: None,
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    #[napi]
-    pub fn dispose(&self) {
-        if self.alive.swap(false, Ordering::AcqRel)
-            && let Some(host) = &self.host
-        {
-            host.retire();
-        }
-    }
-
-    #[napi]
-    pub fn text(&self) -> Result<String> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .text()
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .text()
-            .to_owned())
-    }
-
-    #[napi(js_name = "cursorBytes")]
-    pub fn cursor_bytes(&self) -> Result<i64> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .cursor_bytes()
-                .map(|cursor| cursor as i64)
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .cursor_bytes() as i64)
-    }
-
-    #[napi(js_name = "setText")]
-    pub fn set_text(&self, text: String) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .set_text(text)
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        self.state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .set_text(text);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn clear(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .clear()
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        self.state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .clear();
-        Ok(())
-    }
-
-    #[napi(js_name = "setMultiline")]
-    pub fn set_multiline(&self, enabled: bool) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .set_multiline(enabled)
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        self.state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .set_multiline(enabled);
-        Ok(())
-    }
-
-    #[napi(js_name = "isMultiline")]
-    pub fn is_multiline(&self) -> Result<bool> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .is_multiline()
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-            .is_multiline())
-    }
-
-    #[napi]
-    pub fn submitted(&self) -> Result<NativeTuiOutput> {
-        ensure_alive(&self.alive)?;
-        let output = if let Some(host) = &self.host {
-            host.submitted()
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?
-        } else {
-            self.state
-                .lock()
-                .map_err(|_| crate::NativeError::internal("text input lock is poisoned"))?
-                .submitted()
-        };
-        Ok(NativeTuiOutput { output })
-    }
-
-    #[napi(js_name = "componentId")]
-    pub fn component_id(&self) -> Result<Option<i64>> {
-        ensure_alive(&self.alive)?;
-        Ok(self
-            .host
-            .as_ref()
-            .and_then(HostTextInput::component_id)
-            .map(|id| id as i64))
-    }
-
-    fn from_host(host: HostTextInput) -> Self {
-        Self {
-            state: Mutex::new(TextInput::new()),
-            host: Some(host),
-            alive: AtomicBool::new(true),
-        }
-    }
 }
 
 #[napi]
@@ -457,14 +298,6 @@ impl NativeTuiHost {
         Ok(identity.map_or(serde_json::Value::Null, |value| {
             serde_json::Value::String(value.to_string())
         }))
-    }
-
-    #[napi(js_name = "uiContentVisible")]
-    pub fn ui_content_visible(&self) -> Result<bool> {
-        ensure_alive(&self.alive)?;
-        self.host
-            .ui_content_visible()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     #[napi(js_name = "uiPortMounted")]
@@ -777,26 +610,12 @@ impl NativeTuiHost {
         Ok(())
     }
 
-    #[napi(js_name = "disposeContentResources")]
-    pub fn dispose_content_resources(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.host
-            .dispose_content_resources()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
     #[napi]
     pub fn exit(&self) -> Result<()> {
         ensure_alive(&self.alive)?;
         self.host
             .exit()
             .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "nextWakeMs")]
-    pub fn next_wake_ms(&self) -> Result<i64> {
-        ensure_alive(&self.alive)?;
-        Ok(i64::try_from(self.host.next_wake_ms()).unwrap_or(i64::MAX))
     }
 
     #[napi]
@@ -850,29 +669,6 @@ impl NativeTuiHost {
         Ok(NativeContentPort::from_host(port))
     }
 
-    #[napi(js_name = "textInput")]
-    pub fn text_input(
-        &self,
-        multiline: Option<bool>,
-        border: Option<Value>,
-    ) -> Result<NativeTextInput> {
-        ensure_alive(&self.alive)?;
-        // Validate and lower the border before registering the component so a
-        // malformed option cannot leave an unreachable host component behind.
-        let border = border.map(theme_dto::build_border_spec).transpose()?;
-        let input = self
-            .host
-            .create_text_input(multiline.unwrap_or(false))
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        if let Some(border) = border
-            && let Err(error) = input.set_border(border)
-        {
-            input.retire();
-            return Err(crate::NativeError::internal(error.to_string()));
-        }
-        Ok(NativeTextInput::from_host(input))
-    }
-
     #[napi(js_name = "bindKey")]
     pub fn bind_key(
         &self,
@@ -883,26 +679,6 @@ impl NativeTuiHost {
         ensure_alive(&self.alive)?;
         self.host
             .bind_key(parse_key(&key, modifiers.as_deref())?, route_id)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn route(&self, output: &NativeTuiOutput, route_id: String) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.host
-            .route_text_input_output(output.output, route_id)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi(js_name = "interceptPaste")]
-    pub fn intercept_paste(&self, input: &NativeTextInput, route_id: String) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let host_input = input
-            .host
-            .as_ref()
-            .ok_or_else(|| crate::NativeError::invalid_input("text input is not mounted"))?;
-        self.host
-            .intercept_paste(host_input, route_id)
             .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
     }
 
@@ -926,12 +702,6 @@ impl NativeTuiHost {
         self.host
             .forward_paste(&text)
             .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "pollTerminal")]
-    pub fn poll_terminal(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.host.poll_terminal().map_err(native_input_error)
     }
 
     #[napi(js_name = "nextOutput")]
@@ -1627,16 +1397,6 @@ pub(super) fn text_attribute(value: &str) -> Option<TextAttribute> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn native_text_input_owns_unicode_cursor_state() {
-        let input = NativeTextInput::new(None);
-        input.set_text("hello 🌍".into()).unwrap();
-        assert_eq!(input.text().unwrap(), "hello 🌍");
-        assert_eq!(input.cursor_bytes().unwrap(), "hello 🌍".len() as i64);
-        input.dispose();
-        assert!(input.text().is_err());
-    }
 
     #[test]
     fn content_connector_status_maps_cleanup_through_the_existing_error_lane() {

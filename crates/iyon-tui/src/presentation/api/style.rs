@@ -339,7 +339,6 @@ impl StyleAssignments {
         }
     }
 
-    #[allow(dead_code)]
     fn iter(&self) -> impl Iterator<Item = (&StyleStateKey, &StyleStateValue)> {
         self.entries.iter().map(|(key, value)| (key, value))
     }
@@ -366,11 +365,6 @@ impl StyleStates {
 
     pub(crate) fn get(&self, key: &StyleStateKey) -> Option<&StyleStateValue> {
         self.assignments.get(key)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&StyleStateKey, &StyleStateValue)> {
-        self.assignments.iter()
     }
 }
 

@@ -4,7 +4,6 @@ mod id;
 mod mount;
 mod registry;
 mod revision;
-mod slot;
 mod tick;
 
 use std::sync::Arc;

@@ -3,8 +3,6 @@
 //! This module is intentionally hidden behind the `perf-counters` feature. It
 //! is a measurement seam for benchmark tooling, not ordinary framework API.
 
-#![allow(dead_code)]
-
 #[cfg(all(test, feature = "perf-counters"))]
 use std::cell::Cell;
 #[cfg(feature = "perf-counters")]
@@ -15,38 +13,14 @@ use std::time::Instant;
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Counter {
-    ResolverNodesVisited,
     ComponentCapabilityCalls,
-    MeasureNodeCalls,
-    PrepareNodeCalls,
-    LayoutNodesEmitted,
-    PaintNodesVisited,
-    PaintCellsAllocated,
     SurfaceCellsComposited,
-    HistoryUnitsExamined,
-    HistoryUnitsMeasured,
-    HistoryCachedHeightHits,
-    PersistentSeqNodesAllocated,
-    PersistentSeqLeafClones,
-    PersistentSeqBranchClones,
-    ComponentGeometryNodesVisited,
-    DecoratedNormalizedNodes,
     SourceSnapshotsAcquired,
-    AnnotationRecordsCopied,
-    SemanticPreparations,
-    GlobalCacheClears,
-    ContentSurfaceClones,
     ContentRegistryPortScans,
-    TextBytesCopied,
     SemanticProjectionRebuilds,
-    ContentDirtyRecordsMarked,
-    ContentMetricEvaluations,
-    ContentMetricChanges,
-    ContentPaintPropagations,
     ContentWakeGroups,
     ContentDueConnectors,
     ContentCandidateRecordsPrepared,
-    ContentPathIndexNodesVisited,
     ContentDemandNodesVisited,
     ContentOwnerNodesVisited,
     UiControlKeysVisited,
@@ -75,38 +49,14 @@ impl Counter {
 }
 
 const NAMES: [&str; Counter::COUNT] = [
-    "resolver_nodes_visited",
     "component_capability_calls",
-    "measure_node_calls",
-    "prepare_node_calls",
-    "layout_nodes_emitted",
-    "paint_nodes_visited",
-    "paint_cells_allocated",
     "surface_cells_composited",
-    "history_units_examined",
-    "history_units_measured",
-    "history_cached_height_hits",
-    "persistent_seq_nodes_allocated",
-    "persistent_seq_leaf_clones",
-    "persistent_seq_branch_clones",
-    "component_geometry_nodes_visited",
-    "decorated_normalized_nodes",
     "source_snapshots_acquired",
-    "annotation_records_copied",
-    "semantic_preparations",
-    "global_cache_clears",
-    "content_surface_clones",
     "content_registry_port_scans",
-    "text_bytes_copied",
     "semantic_projection_rebuilds",
-    "content_dirty_records_marked",
-    "content_metric_evaluations",
-    "content_metric_changes",
-    "content_paint_propagations",
     "content_wake_groups",
     "content_due_connectors",
     "content_candidate_records_prepared",
-    "content_path_index_nodes_visited",
     "content_demand_nodes_visited",
     "content_owner_nodes_visited",
     "ui_control_keys_visited",
@@ -238,19 +188,6 @@ impl Drop for ScopedTimer {
             u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
     }
-}
-
-/// Sets a counter used as a current restart/offset gauge.
-#[inline(always)]
-pub fn set(counter: Counter, value: u64) {
-    #[cfg(all(test, feature = "perf-counters"))]
-    if !TEST_COUNTERS_ENABLED.with(Cell::get) {
-        return;
-    }
-    #[cfg(feature = "perf-counters")]
-    VALUES[counter.index()].store(value, Ordering::Relaxed);
-    #[cfg(not(feature = "perf-counters"))]
-    let _ = (counter, value);
 }
 
 /// Reads all counters atomically.

@@ -9,24 +9,8 @@
 import { tuiError } from "../../api/errors.ts";
 import { resolveNativeArtifact } from "./artifact.ts";
 
-export interface NativeTuiOutputContract {
-	readonly output?: unknown;
-}
-
 export interface NativeWake {
 	readonly schedule_environment_drain: boolean;
-}
-
-export interface NativeTextInputContract {
-	dispose(): void;
-	text(): string;
-	cursorBytes(): number;
-	setText(value: string): void;
-	clear(): void;
-	submitted(): NativeTuiOutputContract;
-	setMultiline(enabled: boolean): void;
-	isMultiline(): boolean;
-	componentId(): number | null;
 }
 
 export interface NativeTextSourceContract {
@@ -81,8 +65,6 @@ export interface NativeTuiHostContract {
 	dispose(): void;
 	exit(): void;
 	contentPort(family?: string): NativeContentPortContract;
-	disposeContentResources(): void;
-	textInput(multiline?: boolean, border?: object): NativeTextInputContract;
 	setTheme(theme: object): void;
 	exited(): boolean;
 	bindKey(
@@ -90,13 +72,9 @@ export interface NativeTuiHostContract {
 		modifiers: readonly string[] | undefined,
 		routeId: string,
 	): void;
-	route(output: NativeTuiOutputContract, routeId: string): void;
-	interceptPaste(input: object, routeId: string): void;
 	dispatchKey(key: string, modifiers?: readonly string[]): void;
 	dispatchPaste(text: string): void;
 	forwardPaste(text: string): void;
-	pollTerminal(): void;
-	nextWakeMs(): number;
 	nextOutput(): { route_id: string; payload?: string | null } | null;
 	waitForOutput(): Promise<{
 		route_id: string;
@@ -114,7 +92,6 @@ export interface NativeTuiHostContract {
 		readonly kind: number;
 	};
 	uiHistoryUnitIdentity(handle: readonly number[]): number | string | null;
-	uiContentVisible(): boolean;
 	/** Authoritative status of a qualified UI ContentPort/Connector resource. */
 	uiPortMounted?(handle: readonly number[]): boolean;
 	uiConnectorStatus?(handle: readonly number[]): object;
@@ -205,13 +182,11 @@ export interface NativeTuiHostContract {
 export interface NativeTuiAddon {
 	nativeVersion(): string;
 	tuiSmoke(): string;
-	NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
 	NativeTuiHost?: new (
 		width?: number,
 		height?: number,
 		headless?: boolean,
 	) => NativeTuiHostContract;
-	NativeTuiOutput?: new () => NativeTuiOutputContract;
 	NativeTextSource?: new (
 		kind?: "block" | "stream",
 		options?: object,

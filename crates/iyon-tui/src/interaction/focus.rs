@@ -36,11 +36,6 @@ impl FocusState {
         self.active_modal
     }
 
-    #[cfg(test)]
-    pub(crate) fn modal_restore_is_empty(&self) -> bool {
-        self.modal_restore.is_empty()
-    }
-
     pub(crate) fn reconcile_with_geometry(
         &mut self,
         graph: &MountGraph,

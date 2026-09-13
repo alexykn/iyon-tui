@@ -17,9 +17,6 @@ mod tests;
 pub(crate) use buffer::TextBuffer;
 pub(crate) use command::TextInputCommand;
 
-#[cfg(test)]
-use std::ops::Range;
-
 use crate::{
     BorderSpec, Component, ComponentCx, EventCx, InteractionResult, Output, geometry::Size,
     presentation::wrap::input_wrap_ranges,
@@ -305,11 +302,6 @@ impl TextInput {
     #[cfg(test)]
     pub(crate) fn set_cursor_for_test(&mut self, cursor: usize) {
         self.buffer.set_cursor(cursor);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn move_up_in_rows_for_test(&mut self, rows: &[Range<usize>]) -> bool {
-        self.buffer.move_up_in_rows(rows)
     }
 }
 

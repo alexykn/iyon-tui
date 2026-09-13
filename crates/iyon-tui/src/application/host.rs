@@ -416,8 +416,6 @@ pub(crate) struct HostInner {
     /// wake group into one pending epoch without allocating a temporary fanout
     /// vector for every mutation.
     pub(super) content_dirty_scratch: Vec<crate::presentation::ContentDirty>,
-    #[cfg(test)]
-    fail_next_frame: Option<String>,
     pub(super) content: ContentHostRegistry,
     /// Canonical React occurrence owner. The direct renderer consumes its
     /// immutable snapshots and never mutates this document.
@@ -449,15 +447,9 @@ pub(crate) struct HostInner {
     failure_notifications: VecDeque<UiFailureNotification>,
     dropped_failure_notifications: u64,
     #[cfg(test)]
-    ui_control_keys_visited: usize,
-    #[cfg(test)]
     waiting_for_presentation_hook: Option<std::sync::mpsc::Sender<()>>,
     #[cfg(test)]
     close_started_hook: Option<std::sync::mpsc::Sender<ClosePhase>>,
-    #[cfg(test)]
-    final_backend_receipt: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
-    #[cfg(test)]
-    test_history_receipt: Option<crate::terminal::HistoryReceipt>,
     presentation_notify: Arc<tokio::sync::Notify>,
     history_work_notify: Arc<CompletionSignal>,
     /// Completion edge for direct layout/paint and content workers. Close
@@ -922,8 +914,6 @@ impl TuiHost {
                 content_dirty: false,
                 physical_sync_unknown: false,
                 content_dirty_scratch: Vec::new(),
-                #[cfg(test)]
-                fail_next_frame: None,
                 content: ContentHostRegistry::new(environment.content_source_registry().map_err(
                     |error| anyhow::anyhow!("content environment setup failed: {error}"),
                 )?),
@@ -943,15 +933,9 @@ impl TuiHost {
                 failure_notifications: VecDeque::new(),
                 dropped_failure_notifications: 0,
                 #[cfg(test)]
-                ui_control_keys_visited: 0,
-                #[cfg(test)]
                 waiting_for_presentation_hook: None,
                 #[cfg(test)]
                 close_started_hook: None,
-                #[cfg(test)]
-                final_backend_receipt: None,
-                #[cfg(test)]
-                test_history_receipt: None,
                 presentation_notify: Arc::new(tokio::sync::Notify::new()),
                 history_work_notify: Arc::new(CompletionSignal::new()),
                 worker_completion_notify: Arc::new(CompletionSignal::new()),
@@ -2097,19 +2081,6 @@ impl TuiHost {
         result
     }
 
-    #[cfg(test)]
-    pub fn fail_next_frame_for_test(&self, diagnostic: impl Into<String>) -> Result<()> {
-        self.lock_mut()
-            .map(|mut inner| inner.fail_next_frame = Some(diagnostic.into()))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn mark_backend_stopped_for_test(&self) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        inner.mark_faulted();
-        Ok(())
-    }
-
     /// Poisons this host's owner lock for cross-crate failure-injection tests.
     /// The hook is available only to the in-tree test-util feature and never
     /// crosses the normal native or TypeScript host surface.
@@ -2315,17 +2286,7 @@ fn settle_history_plan_with_backend(
     backend: &mut HostBackend,
     plan: crate::history::NativeTransferPlan,
 ) -> Result<crate::history::NativeTransferOutcome> {
-    #[cfg(test)]
-    let test_receipt = host
-        .lock()
-        .map_err(|error| anyhow::anyhow!("host lock is poisoned: {error}"))?
-        .test_history_receipt
-        .take();
-    #[cfg(not(test))]
-    let test_receipt = None;
-    let receipt = match test_receipt
-        .map_or_else(|| backend.begin_history_rows(plan.rows().to_vec()), Ok)
-    {
+    let receipt = match backend.begin_history_rows(plan.rows().to_vec()) {
         Ok(receipt) => receipt,
         Err(error) => {
             let mut inner = host
@@ -2768,17 +2729,7 @@ fn settle_final_frame(
     backend: &mut HostBackend,
     frame: PreparedFrame,
 ) -> Result<()> {
-    #[cfg(test)]
-    let test_receipt = host
-        .lock()
-        .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?
-        .final_backend_receipt
-        .take();
-    #[cfg(not(test))]
-    let test_receipt = None;
-    let receipt_result = if let Some(receipt) = test_receipt {
-        Some(blocking_receive(receipt))
-    } else if !frame.is_no_output() {
+    let receipt_result = if !frame.is_no_output() {
         let scene = frame
             .scene()
             .ok_or_else(|| anyhow::anyhow!("output frame has no captured scene"))?;
@@ -2948,19 +2899,6 @@ impl HostInner {
         });
     }
 
-    #[cfg(test)]
-    fn install_test_final_receipt(
-        &mut self,
-        receipt: tokio::sync::oneshot::Receiver<anyhow::Result<()>>,
-    ) {
-        self.final_backend_receipt = Some(receipt);
-    }
-
-    #[cfg(test)]
-    fn install_test_history_receipt(&mut self, receipt: crate::terminal::HistoryReceipt) {
-        self.test_history_receipt = Some(receipt);
-    }
-
     pub(super) fn service_native_deadline_inner(&mut self) -> Result<u64> {
         if self.headless || self.is_closed() {
             return Ok(u64::MAX);
@@ -3049,13 +2987,6 @@ impl HostInner {
         (attempted_epoch, desired_revision, self.pending_epoch)
     }
 
-    #[cfg(test)]
-    pub(crate) fn ui_history_len(&self) -> usize {
-        self.running
-            .scene_history()
-            .map_or(0, crate::history::History::len)
-    }
-
     fn candidate_content_commit(&mut self) -> Result<PreparedContentCommit> {
         // H3 already validated the complete attachment list before desired
         // acceptance. The content commit plan needs only the changed-record
@@ -3113,37 +3044,6 @@ impl HostInner {
         &self,
     ) -> Result<(std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>)> {
         self.running.scene_host().install_layout_latch_for_test()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn prepare_test_candidate(&mut self) -> Result<PreparedSceneFrame> {
-        let mut backend = self
-            .backend
-            .take()
-            .expect("open host must own its terminal backend");
-        let result = self
-            .prepare_candidate_frame_with_backend(&mut backend)
-            .and_then(|(frame, _)| match frame.product {
-                PreparedFrameProduct::Scene { products, .. }
-                | PreparedFrameProduct::NoOutput { products, .. } => Ok(products.scene),
-                PreparedFrameProduct::Metadata { .. } => {
-                    Err(anyhow::anyhow!("test candidate did not prepare a scene"))
-                }
-            });
-        self.backend = Some(backend);
-        result
-    }
-
-    #[cfg(test)]
-    fn install_test_bootstrap_receipt(
-        &mut self,
-        receipt: tokio::sync::oneshot::Receiver<anyhow::Result<()>>,
-    ) {
-        self.bootstrap_pending = false;
-        self.bootstrap_receipt = Some(PresentReceipt::from_receiver(
-            receipt,
-            self.environment.receipt_wake(self.host_id),
-        ));
     }
 
     fn epochs(&self) -> HostEpochs {
@@ -3504,16 +3404,7 @@ impl HostInner {
         };
 
         let rows = plan.rows().to_vec();
-        #[cfg(test)]
-        let test_receipt = {
-            let mut inner = host
-                .lock()
-                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
-            inner.test_history_receipt.take()
-        };
-        #[cfg(not(test))]
-        let test_receipt = None;
-        let receipt_result = test_receipt.map_or_else(|| backend.begin_history_rows(rows), Ok);
+        let receipt_result = backend.begin_history_rows(rows);
         let mut inner = match host.lock() {
             Ok(inner) => inner,
             Err(error) => {
@@ -4250,10 +4141,6 @@ impl HostInner {
         sync_editor_value: bool,
     ) -> Result<()> {
         crate::perf::inc(crate::perf::Counter::UiControlKeysVisited);
-        #[cfg(test)]
-        {
-            self.ui_control_keys_visited = self.ui_control_keys_visited.saturating_add(1);
-        }
         let Some(state) = self.ui_resources.control_state(key).cloned() else {
             self.retire_ui_control(key);
             return Ok(());
@@ -4265,11 +4152,6 @@ impl HostInner {
             crate::occurrence::ControlKind::Scroll => self.sync_ui_scroll(key),
             crate::occurrence::ControlKind::Animation => self.sync_ui_animation(key),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_ui_control_keys_visited(&self) -> usize {
-        self.ui_control_keys_visited
     }
 
     fn retire_ui_control(&mut self, key: crate::occurrence::ResourceKey) {
@@ -5212,16 +5094,6 @@ impl HostInner {
             .attempt_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("host attempt revision exhausted"))?;
-        #[cfg(test)]
-        if let Some(diagnostic) = self.fail_next_frame.take() {
-            let error = host_attempt_error("frame", "FRAME_PREPARATION_FAILED", true, diagnostic);
-            let ui_revision = self.ui_resources.document.as_ref().map_or(
-                0,
-                crate::occurrence::OccurrenceDocument::accepted_ui_revision,
-            );
-            self.record_failed_frame(&error, "frame", ui_revision, self.pending_epoch);
-            return Err(error);
-        }
         let status_dirty = match self.advance_runtime_for_candidate(true) {
             Ok(dirty) => dirty,
             Err(error) if is_async_work_pending(&error) => {

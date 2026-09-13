@@ -1,7 +1,6 @@
 import { tuiError, asTuiError } from "../errors.ts";
 import { FrameworkHandle } from "../controls/framework-handle.ts";
 import { runtimeResourceRegistry } from "../../transport/native/resource-registry.ts";
-import { runtimeEnvironment } from "../../runtime/environment.ts";
 import {
 	appendTextSource,
 	clearTextSource,

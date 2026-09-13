@@ -3649,17 +3649,6 @@ impl HostContentSource {
         }
         Ok(())
     }
-
-    #[cfg(test)]
-    pub(crate) fn subscriber_count(&self) -> usize {
-        self.record.lock().map_or(0, |record| {
-            record
-                .subscribers
-                .values()
-                .map(|group| group.tokens.len())
-                .sum()
-        })
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -4133,8 +4122,6 @@ pub(crate) struct ContentHostRegistry {
     /// stays retained until a later candidate can release it safely.
     pending_source_cleanups: Vec<PreparedSourceCleanup>,
     pending_source_cleanup_ids: HashSet<u64>,
-    #[cfg(test)]
-    test_poison_source_after_first_cleanup: Option<u64>,
     /// Attempt-local immutable Source captures.  The map is populated lazily
     /// by the first demanded Connector and shared by all later key/history
     /// lookups in that candidate.  Interior mutability keeps the read-only
@@ -4173,10 +4160,6 @@ pub(crate) struct ContentHostRegistry {
     /// needs admission, so it cannot retain a closed host or registry.
     deferred_projection_waiter: Option<u64>,
     projection_results_ready: bool,
-    #[cfg(test)]
-    ui_demand_nodes_visited: usize,
-    #[cfg(test)]
-    ui_owner_nodes_visited: usize,
 }
 
 impl ContentHostRegistry {
@@ -4210,8 +4193,6 @@ impl ContentHostRegistry {
             candidate_touched_ports: HashSet::new(),
             pending_source_cleanups: Vec::new(),
             pending_source_cleanup_ids: HashSet::new(),
-            #[cfg(test)]
-            test_poison_source_after_first_cleanup: None,
             candidate_source_snapshots: RefCell::new(HashMap::new()),
             candidate_capture_active: false,
             candidate_commit_prepared: false,
@@ -4228,10 +4209,6 @@ impl ContentHostRegistry {
             pending_content_projections: HashMap::new(),
             deferred_projection_waiter: None,
             projection_results_ready: false,
-            #[cfg(test)]
-            ui_demand_nodes_visited: 0,
-            #[cfg(test)]
-            ui_owner_nodes_visited: 0,
         }
     }
 
@@ -4253,10 +4230,6 @@ impl ContentHostRegistry {
             crate::perf::Counter::ContentOwnerNodesVisited,
             u64::try_from(owner_visited).unwrap_or(u64::MAX),
         );
-        #[cfg(test)]
-        {
-            self.ui_owner_nodes_visited = self.ui_owner_nodes_visited.saturating_add(owner_visited);
-        }
         port_keys.sort_unstable_by_key(|key| (key.slot, key.generation));
         port_keys.dedup();
         let synced_keys = port_keys.clone();
@@ -4377,48 +4350,11 @@ impl ContentHostRegistry {
                 crate::perf::Counter::ContentDemandNodesVisited,
                 visited as u64,
             );
-            #[cfg(test)]
-            {
-                self.ui_demand_nodes_visited = self.ui_demand_nodes_visited.saturating_add(visited);
-            }
             if is_demanded {
                 demanded.insert(*key);
             }
         }
         Ok(demanded)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_ui_demand_nodes_visited(&self) -> usize {
-        self.ui_demand_nodes_visited
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_ui_owner_nodes_visited(&self) -> usize {
-        self.ui_owner_nodes_visited
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_ui_adapter_count(&self) -> usize {
-        self.ui_connector_keys_by_id.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_ui_confirmed_connector(
-        &self,
-        port: ResourceKey,
-    ) -> Option<(ResourceKey, u64)> {
-        self.ui_confirmed_connectors.get(&port).copied()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_port_count(&self) -> usize {
-        self.ports.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_connector_count(&self) -> usize {
-        self.connectors.len()
     }
 
     fn remove_stale_ui_ports(&mut self, keys: Vec<ResourceKey>) -> Result<()> {
@@ -7389,24 +7325,11 @@ impl ContentHostRegistry {
         }
 
         // Source association cleanup is deliberately after logical
-        // promotion.  If a Source becomes poisoned in this narrow window,
-        // retain both its membership and wake subscription and retry from a
-        // later candidate; do not report the already-promoted frame as an
-        // aborted commit or partially tear down an old-visible Connector.
-        #[cfg(test)]
-        let mut source_cleanup_completed = false;
+        // promotion. If a Source lock is unavailable, retain both its
+        // membership and wake subscription and retry from a later candidate;
+        // do not report the already-promoted frame as an aborted commit or
+        // partially tear down an old-visible Connector.
         for cleanup in &plan.source_cleanups {
-            #[cfg(test)]
-            if source_cleanup_completed
-                && self.test_poison_source_after_first_cleanup == Some(cleanup.source_id)
-            {
-                self.test_poison_source_after_first_cleanup = None;
-                let source_record = cleanup.source.record.clone();
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let _guard = source_record.lock().unwrap();
-                    panic!("intentional post-promotion Source cleanup failure");
-                }));
-            }
             let Ok(mut state) = cleanup.record.lock() else {
                 self.defer_source_cleanup(cleanup);
                 continue;
@@ -7443,10 +7366,6 @@ impl ContentHostRegistry {
             state.cleanup_error = None;
             drop(state);
             self.finish_source_cleanup(cleanup.connector_id);
-            #[cfg(test)]
-            {
-                source_cleanup_completed = true;
-            }
         }
         for connector in &plan.connectors {
             let mut state = connector
@@ -7890,10 +7809,6 @@ impl ContentHostRegistry {
         self.candidate_touched_ports.clear();
         self.pending_source_cleanups.clear();
         self.pending_source_cleanup_ids.clear();
-        #[cfg(test)]
-        {
-            self.test_poison_source_after_first_cleanup = None;
-        }
         self.candidate_source_snapshots.borrow_mut().clear();
         self.candidate_capture_active = false;
         self.candidate_commit_prepared = false;
@@ -8049,78 +7964,6 @@ impl ContentHostRegistry {
                 .subscribed = false;
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    fn set_connector_visible_record(
-        &mut self,
-        connector_id: u64,
-        connector: &Arc<Mutex<ConnectorRecord>>,
-        visible: bool,
-        synchronize_deadline: bool,
-        preserve_newer_control: bool,
-    ) -> Result<()> {
-        let mut state = connector
-            .lock()
-            .map_err(|_| anyhow!("Connector lock is poisoned during visibility update"))?;
-        state.visible = visible;
-        let source = state.source.clone();
-        let generation = state.generation;
-        if visible {
-            state.phase = if state.lifecycle == ConnectorLifecycle::Disposing {
-                "disposing"
-            } else {
-                "active"
-            };
-        } else if !preserve_newer_control {
-            state.committed_projection = None;
-            state.candidate_projection = None;
-            state.projection_cache.clear();
-            state.prefix_proof_cache.clear();
-            state.projected_source_revision = None;
-            state.projection_failure_key = None;
-            state.execution = None;
-            state.delivery_revision = 0;
-            state.candidate_delivery_frontier = StreamOffset::ZERO;
-            state.committed_delivery_frontier = StreamOffset::ZERO;
-        }
-        if !visible && state.lifecycle != ConnectorLifecycle::Disposing {
-            state.phase = if state.error.is_some() && state.requested {
-                "failed"
-            } else if state.requested {
-                "activation-pending"
-            } else {
-                "idle"
-            };
-        }
-        let requested = state.requested;
-        drop(state);
-        if visible {
-            if synchronize_deadline {
-                self.sync_connector_deadline(connector_id, None)?;
-            }
-        } else {
-            self.active_deadlines.remove(&connector_id);
-            self.active_connectors.remove(&connector_id);
-            if !requested {
-                source.unsubscribe(&self.owner_host, connector_id, generation)?;
-                connector
-                    .lock()
-                    .map_err(|_| anyhow!("Connector lock is poisoned after unsubscribe"))?
-                    .subscribed = false;
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn set_connector_visible(&mut self, connector_id: u64, visible: bool) {
-        self.touch_connector(connector_id);
-        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
-            return;
-        };
-        self.set_connector_visible_record(connector_id, &connector, visible, visible, false)
-            .expect("test connector visibility update must succeed");
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
@@ -8561,48 +8404,6 @@ impl ContentHostRegistry {
             .get(&id)
             .and_then(|connector| connector.lock().ok())
             .is_none_or(|state| state.lifecycle == ConnectorLifecycle::Disposed)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn poison_connector_for_test(&self, id: u64) -> Result<()> {
-        let connector = self
-            .connectors
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = connector
-                .lock()
-                .expect("Connector must be healthy before poison");
-            panic!("intentional Connector lock poison");
-        }));
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn clear_connector_poison_for_test(&self, id: u64) -> Result<()> {
-        let connector = self
-            .connectors
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
-        connector.clear_poison();
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn poison_source_after_first_cleanup_for_test(&mut self, source_id: u64) {
-        self.test_poison_source_after_first_cleanup = Some(source_id);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn clear_source_poison_for_test(&self, source: &HostContentSource) {
-        source.record.clear_poison();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_source_cleanup_count(&self) -> usize {
-        self.pending_source_cleanups.len()
     }
 
     pub(crate) fn has_pending_source_cleanup(&self) -> bool {

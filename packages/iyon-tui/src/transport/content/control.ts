@@ -6,8 +6,11 @@
  * payload/projection work; bulk Source data belongs to the content data plane.
  */
 
-import type { NativeTextSourceContract } from "../native/addon.ts";
-import { nativeTui } from "../native/factories.ts";
+import {
+	type NativeTextSourceContract,
+	native,
+	requireNativeClass,
+} from "../native/addon.ts";
 
 export type { NativeTextSourceContract };
 
@@ -15,5 +18,9 @@ export function createTextSource(
 	kind: "block" | "stream",
 	options?: object,
 ): NativeTextSourceContract {
-	return nativeTui.textSource(kind, options);
+	const NativeTextSource = requireNativeClass(
+		native.NativeTextSource,
+		"NativeTextSource",
+	);
+	return new NativeTextSource(kind, options);
 }

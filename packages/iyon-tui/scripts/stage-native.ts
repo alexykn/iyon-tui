@@ -63,6 +63,8 @@ const addon = require(stagedAddon.pathname) as Record<string, unknown> & {
 	tuiSmoke?: () => string;
 };
 const removedNativeClasses = [
+	"NativeTextInput",
+	"NativeTuiOutput",
 	"NativeMarkdownProjector",
 	"NativePlainProjector",
 	"NativeHistory",
@@ -77,6 +79,13 @@ const removedNativeMethods: Readonly<Record<string, readonly string[]>> = {
 		"setDesiredViewRef",
 		"viewState",
 		"tuiViewAbiHostPointer",
+		"textInput",
+		"route",
+		"interceptPaste",
+		"uiContentVisible",
+		"disposeContentResources",
+		"nextWakeMs",
+		"pollTerminal",
 	],
 };
 const removedNativeExports = [

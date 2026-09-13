@@ -1,8 +1,6 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
-use pulldown_cmark::{
-    Alignment as PdAlignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd,
-};
+use pulldown_cmark::{Alignment as PdAlignment, CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 use crate::{
     projection::{Projection, ProjectionBuilder, ProjectionSpan, Projector},
@@ -1427,9 +1425,4 @@ fn list_marker(
         style: NumberStyle::Decimal,
         delimiter,
     })
-}
-
-#[allow(dead_code)]
-fn _pulldown_options(options: MarkdownOptions) -> Options {
-    options.pulldown()
 }

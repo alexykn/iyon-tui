@@ -593,11 +593,6 @@ type RuntimeGlobals = typeof globalThis & {
 const globals = globalThis as RuntimeGlobals;
 const environment = (globals[ENVIRONMENT_KEY] ??= {});
 
-/** The one JavaScript-realm environment used by framework handles. */
-export function runtimeResourceEnvironment(): object {
-	return environment;
-}
-
 /** The one resolver shared by native/control and structural seams. */
 export function runtimeResourceRegistry(): NativeResourceRegistry {
 	return (globals[REGISTRY_KEY] ??= new NativeResourceRegistry(environment));

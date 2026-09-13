@@ -5,11 +5,11 @@ import {
 	registerNativeResource,
 	releaseNativeResource,
 } from "../transport/native/resources.ts";
-import { runtimeResourceRegistry } from "../transport/native/resource-registry.ts";
-import type {
-	NativeResourceKind,
-	ResourceOwner,
-} from "./native-resource-registry.ts";
+import {
+	runtimeResourceRegistry,
+	type NativeResourceKind,
+	type ResourceOwner,
+} from "../transport/native/resource-registry.ts";
 
 export interface FrameworkHandleResourceOptions {
 	readonly owner?: ResourceOwner;

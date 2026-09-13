@@ -233,11 +233,9 @@ if (forbiddenAuthoring.length > 0) {
 	);
 }
 
-// 3. The unsupported binding is the only public runtime seam. The one
-// feature-gated benchmark module is an explicit tooling exception: it is
-// hidden from documentation and is not an authoring API. Keeping this check on the
-// source root (rather than only on the mapping snapshot) makes a newly added
-// `pub use` or public semantic module fail immediately.
+// 3. The unsupported binding is the only public runtime seam. Keeping this
+// check on the source root (rather than only on the mapping snapshot) makes a
+// newly added `pub use` or public semantic module fail immediately.
 const lib = readFileSync(CORE_LIB, "utf8");
 const manifest = readFileSync(CORE_MANIFEST, "utf8");
 const posture: string[] = [];
@@ -255,23 +253,6 @@ for (const match of lib.matchAll(
 	const name = match[1]!;
 	if (!ROOT_ALLOWED_PUBLIC_MODULES.has(name)) {
 		posture.push(`crate root publishes unsupported module ${name}`);
-		continue;
-	}
-	if (name !== "binding") {
-		const declarationStart = match.index ?? 0;
-		const context = lib.slice(
-			Math.max(0, declarationStart - 160),
-			declarationStart,
-		);
-		if (!/#\[\s*doc\s*\(\s*hidden\s*\)\s*\]/u.test(context)) {
-			posture.push(`internal tooling module ${name} is not #[doc(hidden)]`);
-		}
-		if (
-			name === "perf_bench" &&
-			!/#\[\s*cfg\(\s*feature\s*=\s*"perf-counters"\s*\)\s*\]/u.test(context)
-		) {
-			posture.push("internal tooling module perf_bench is not feature-gated");
-		}
 	}
 }
 if (/(^|\n)\s*pub\s+mod\s+prelude\b/.test(lib))

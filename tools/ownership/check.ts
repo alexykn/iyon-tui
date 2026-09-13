@@ -1511,7 +1511,7 @@ function perf13CleanupGate(): void {
 	const forbidden =
 		/\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector|lowerColdView|lowerSemanticView|tuiViewAbiDecodeRef|tui_view_abi_decode_ref|tryNativeMaterialize|renderColdRef|prepareColdInstall|setRootColdMaterializer|COLD_ROOT_MATERIALIZER|coldLoweringCounterSnapshot|resetColdLoweringCounters|cold_bridge_objects_allocated|RetainedFastFallbackError|FAST_FALLBACK|NativeViewRoute|recordNativeViewRoute|nativeViewRouteSnapshot|resetNativeViewRouteCounters|view_bridge_cache|with_view_runtime|ViewBridgeCache|decode_view|ViewDecoder|publish_decoded_view|record_decoded_semantic_view|lower_axis|apply_decoration|decode_border|decode_decoration|BridgeViewNode|BridgeViewNodeDraft|BridgeLayoutChild|BridgeGridTrackNode|BridgeGridCellNode|BridgeGridRowNode|BridgeDiffHunkNode|BridgeDiffLineNode|BridgeOverflowIndicatorNode|DecorationNode|DiffRangeNode|InsetsNode|VIEW_BRIDGE_SCHEMA_VERSION|BRIDGE_OVERFLOW_KIND|bridge-schema|MaterializerSpec|materializeSpacer|materializeRow|materializeColumn|decodeMaterializeStatus|MaterializeStatus|tryNativeAxisCreate|tryNativeAxisSetChildRender|tryNativeAxisSpliceRender|tryNativeGridSetCellRender|tryNativeEditTransactionRender|bridge_hint|bridge_semantic|bridge_children|tui_bridge_schema|load_bridge_schema|direct_decode)\b/u;
 	const forbiddenNativeBinding =
-		/(?:pub fn (?:render|create_view_slot|scroll_pane|set_view|set_content|set_animation|stop_animation)\b|js_name = "(?:render|createViewSlot|scrollPane|setView|setContent|setAnimation|stopAnimation)")/u;
+		/(?:pub fn (?:render|create_view_slot|scroll_pane|set_view|set_content|set_animation|stop_animation|text_input|route|intercept_paste)\b|js_name = "(?:render|createViewSlot|scrollPane|setView|setContent|setAnimation|stopAnimation|textInput|route|interceptPaste)"|\b(?:NativeTextInput|NativeTuiOutput)\b)/u;
 	const productionRoots = [
 		join(ROOT, "packages/iyon-tui/src"),
 		join(ROOT, "crates/iyon-tui/src"),
@@ -1926,15 +1926,6 @@ function contractParityGate(): void {
 	) {
 		offenders.push(
 			"content facade still exposes a superseded stream lifecycle or omits canonical Source/Funnel/Port types",
-		);
-	}
-	if (
-		!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(
-			native,
-		)
-	) {
-		offenders.push(
-			"NativeTextInput disposal does not request deferred component retirement",
 		);
 	}
 	// PRE-V5-R0 (CLEAN2): the retained structural path is the single production

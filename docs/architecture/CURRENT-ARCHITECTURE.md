@@ -1,9 +1,10 @@
 # Current architecture of iyon-tui
 
-**Status:** current-source reference after the T5/M1 native/schema/state
-deletion implementation and validation slice. It is ready for parent
-source/design review; it is not a self-acceptance of M1, and it does not claim
-that Taffy (T6) or direct semantic content lowering (T7/M2) is complete.
+**Status:** current-source reference for the completed T5/M1 deletion, direct
+Taffy integration, and T7/M2 content-lowering implementation. The current
+route and post-tranche cleanup passed parent review and local integration
+checks; historical performance
+comparison remains unverified and is not a current-source acceptance claim.
 **Companion:** [DOM runtime implementation ledger](DOM-RUNTIME-IMPLEMENTATION.md).
 
 ## 1. Ownership in one view
@@ -24,20 +25,18 @@ NativeTuiHost -> UiResourceOwner -> OccurrenceDocument
         |                  +-- Port/Connector/Control ownership
         |                  +-- topology, roots, generations and revisions
         v
-LegacySceneAdapter (private, one-way M1/M2 adapter)
-        |
-        v
-existing SceneHost/View layout and paint machinery
-        |
-        v
+SceneHost -> Taffy layout -> direct content/control/History paint
+        |                                      |
+        +-- bounded worker products ----------------+
+                                                   v
 captured frame -> terminal worker -> exact receipt -> confirmed frame
 ```
 
-The `LegacySceneAdapter` is not a compatibility authoring API. It derives
-private renderer recipes from accepted occurrence snapshots and is scheduled
-for deletion at T7/M2 after direct Taffy and semantic-content realization are
-accepted. It does not call the deleted native View ABI or allocate ViewRefs,
-leases, paths, builders, edit transactions or ordinary ViewState records.
+`SceneHost` is the current occurrence/Taffy layout and direct-paint coordinator.
+Taffy owns derived geometry; content workers produce immutable semantic
+products; native controls and History retain their own execution and physical
+transfer contracts. There is no occurrence-to-View adapter, View allocator,
+or ordinary ViewState publication path in the current route.
 
 ## 2. Repository boundaries
 
@@ -51,8 +50,8 @@ leases, paths, builders, edit transactions or ordinary ViewState records.
 | `packages/iyon-tui/src/transport/native/` | Addon loading and caller-owned native resource qualification |
 | `packages/iyon-tui/src/runtime/` | Host lifecycle, barriers, events, diagnostics and output waiting; no frame clock |
 | `crates/iyon-tui/src/occurrence/` | Host-local generated schema types, topology, resources, controls and effective properties |
-| `crates/iyon-tui/src/application/` | Native environment, host, content integration, controls, frame state and private adapter |
-| `crates/iyon-tui/src/presentation/` | Existing private renderer IR/layout/paint retained only for the M1 adapter |
+| `crates/iyon-tui/src/application/` | Native environment, direct occurrence host, content integration, controls, frame state and receipts |
+| `crates/iyon-tui/src/presentation/` | Direct occurrence geometry, Taffy layout, content capture and physical paint products |
 | `crates/iyon-tui/src/history/` | History semantics, physical transfer and confirmed-prefix handling |
 | `crates/iyon-tui/src/content/`, `projection/` | Source-rooted semantic content and delivery behavior |
 | `crates/iyon-tui-native/src/tui/ui_commit.rs` | Qualified UI batch decoder and native binding glue |
@@ -75,7 +74,8 @@ wrong anchors, duplicate resource attachments and invalid owner transfers.
 
 Each occurrence stores declared values and explicit overrides. Native control
 facts, inherited theme context and style-state selection are combined into an
-effective snapshot before the private renderer adapter runs. A declared update
+effective snapshot before SceneHost performs direct Taffy layout and paint.
+A declared update
 does not erase an override; clearing an override reveals the latest declared
 value. Last-write coalescing and true no-op behavior are implemented by the
 occurrence commit owner, not by a second state registry.
@@ -98,8 +98,8 @@ The native environment drains accepted work without a mandatory TypeScript
 pump. Native TextInput, paste routing, global-before-local key handling,
 Scroll state, Animation deadlines and output FIFO remain native mechanics.
 Animation frame selection is synchronized back into the occurrence control
-facts before a scheduler-only content demand pass. This lets a deadline switch
-the private recipe without resetting native editor state or requiring a React
+facts before a scheduler-only content demand pass. This lets a deadline update
+the current frame without resetting native editor state or requiring a React
 commit.
 
 The native host owns one presentation candidate/receipt at a time. Candidate
@@ -150,25 +150,27 @@ The checked-in binding and Rust API snapshots were reduced to the current
 seam. Generated-output checks and staging inspect the UI schema and existing
 content ABI; no old/new selector or forwarding stub remains.
 
-## 7. Explicit M2 residue and deletion gates
+## 7. Current execution owners
 
-The following private renderer pieces remain intentionally:
+The current route has no legacy occurrence-to-View adapter or deferred M2
+deletion gate. The following private modules remain because they own current
+behavior:
 
-1. `crates/iyon-tui/src/application/legacy_scene.rs`, because it maps accepted
-   occurrence snapshots to the current terminal renderer while T6/T7 are not
-   complete;
-2. existing `presentation/{api,ir,factory,layout,paint}` and `scene/` internals
-   used by that adapter and by concrete native control mechanics;
-3. content-local semantic projectors and History physical transfer helpers
-   where they still own independent behavior;
-4. `HostViewSlot` and `HostScrollPane` as private native control execution
-   owners, not public View publication targets.
+1. `crates/iyon-tui/src/scene/host.rs` coordinates occurrence snapshots,
+   Taffy-driver requests, content products, direct paint and candidate frames.
+2. `crates/iyon-tui/src/presentation/taffy.rs`,
+   `presentation/direct.rs` and `presentation/direct_tree.rs` own derived
+   geometry and direct physical products. The presentation API and paint
+   modules provide finite values, content realization and styling.
+3. Content projectors, Source FFI, and History transfer helpers retain their
+   independent semantic, lifetime and physical-prefix contracts.
+4. Host-owned editor, scroll and animation components retain concrete input,
+   focus and deadline behavior. They are not View publication targets or a
+   second semantic UI tree.
 
-Their deletion gate is T7/M2: direct Taffy layout is accepted; content-local
-View lowering has moved to direct semantic content projection; control/input,
-Unicode, History, receipt and physical-output witnesses pass; then the adapter,
-recipe origin/cache, old Scene resolution and redundant general-layout state
-are removed. No permanent legacy adapter selector is permitted.
+These owners are part of the direct occurrence/Taffy/content route. Future
+changes must preserve their ownership boundaries and must not recreate the
+deleted View ABI, ordinary ViewState registry, or compatibility selector.
 
 ## 8. Verification
 

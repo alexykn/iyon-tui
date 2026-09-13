@@ -392,15 +392,12 @@ function selectedNativeCounters(): Readonly<Record<string, number>> {
 	// particular, removed renderer counters are not emitted as misleading zeroes.
 	const owned = [
 		"source_snapshots_acquired",
-		"semantic_preparations",
 		"semantic_projection_rebuilds",
 		"content_wake_groups",
 		"content_due_connectors",
 		"content_candidate_records_prepared",
 		"content_demand_nodes_visited",
 		"content_owner_nodes_visited",
-		"content_metric_changes",
-		"content_paint_propagations",
 		"surface_cells_composited",
 		"ui_control_keys_visited",
 		"frame_prepare_nanos",

@@ -29,7 +29,7 @@ import {
 	CONTENT_ABI_SCHEDULE_ENVIRONMENT_DRAIN,
 	contentStatusName,
 } from "./abi.ts";
-import { runtimeEnvironment } from "../../runtime/environment.ts";
+import { runtimeResourceRegistry } from "../native/resource-registry.ts";
 
 const MAX_U32 = 0xffff_ffff;
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
@@ -394,7 +394,7 @@ function openSession(): ContentFfiSession {
 }
 
 function session(): ContentFfiSession {
-	const environment = runtimeEnvironment().resources.environment;
+	const environment = runtimeResourceRegistry().environment;
 	const existing = sessions.get(environment);
 	if (existing !== undefined) return existing;
 	const created = openSession();

@@ -86,14 +86,6 @@ impl ThemeResolver {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_layers(framework: &Theme, application: &Theme) -> Self {
-        Self {
-            framework: framework.clone(),
-            application: application.clone(),
-        }
-    }
-
     pub(crate) fn resolve_text_style(
         &self,
         inherited: PhysicalStyle,
